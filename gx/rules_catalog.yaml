@@ -1,0 +1,213 @@
+# ============================================================================
+# Catalogo unico de reglas DQ  ->  fuente de verdad para GX, severidad y trazabilidad.
+# Cada Expectation lleva meta {rule_id, severity, requirement, dimension} y el pipeline
+# decide la accion segun la severidad (src/etl/validation/policy.py). GX detecta; la politica decide.
+#
+# ESTADO: reglas y umbrales son una PROPUESTA BASE para el equipo de perfilamiento/calidad.
+# Cada `threshold_basis` debe contrastarse con el notebook de profiling (Seccion 7-8 del enunciado):
+# un umbral elegido solo porque "los datos actuales pasan" NO es aceptable.
+#
+# Marcadores resueltos en tiempo de ejecucion:
+#   "$API_VALUE_FIELD_0"        -> primer campo de API_VALUE_FIELDS
+#   {"$ref": "tabla.columna"}   -> valores de otra tabla preparada (preparacion de FK)
+# ============================================================================
+rules:
+  # ---------------------------- Gate 1: primary_raw ----------------------------
+  - rule_id: DQ-P01
+    gate: primary_raw
+    data_object: primary_raw
+    attribute: "14 columnas del RNT"
+    dimension: Validity (schema)
+    expectation: ExpectTableColumnsToMatchSet
+    kwargs:
+      column_set: [CODIGO_RNT, RAZON_SOCIAL_ESTABLECIMIENTO, NIT, CODIGO_DEPARTAMENTO, DEPARTAMENTO,
+                   CODIGO_MUNICIPIO, MUNICIPIO, CATEGORIA, SUB_CATEGORIA, ESTADO_RNT,
+                   NUMERO_DE_HABITACIONES, NUMERO_DE_CAMAS, NUMERO_DE_EMPLEADOS, "AÑO"]
+      exact_match: false
+    severity: critical
+    requirement: "R1-R7"
+    metric: "columnas faltantes = 0"
+    threshold_basis: "Contrato del dataset (diccionario de 14 atributos de la Primera Entrega, README 5.3). Sin un atributo obligatorio las dimensiones no se pueden construir."
+
+  - rule_id: DQ-P02
+    gate: primary_raw
+    data_object: primary_raw
+    attribute: CODIGO_MUNICIPIO
+    dimension: Completeness / Validity
+    expectation: ExpectColumnValuesToMatchRegex
+    kwargs: {column: CODIGO_MUNICIPIO, regex: '^\d{4,5}$', mostly: 0.999}
+    severity: critical
+    requirement: "R1, R2, R6, R7"
+    metric: "% valores no nulos con formato DIVIPOLA >= 100%"
+    threshold_basis: "Es PK de dim_ubicacion y llave de integracion con la API. Un codigo invalido no es cargable ni integrable. Un error aislado de digitacion se rechaza a cuarentena (T02) y su efecto sobre R1/R2 queda acotado a <0.1% de las filas; mas de 0.1% indica corrupcion sistemica y detiene la rama. Hallazgo de profiling real: 22 filas (0.003%) con codigo 1. Admite 4 digitos porque el CSV pierde el cero inicial (05001 -> 5001); se normaliza a 5 digitos en transformacion."
+
+  - rule_id: DQ-P03
+    gate: primary_raw
+    data_object: primary_raw
+    attribute: "AÑO"
+    dimension: Validity
+    expectation: ExpectColumnValuesToMatchRegex
+    kwargs: {column: "AÑO", regex: '^20\d{2}$', mostly: 1.0}
+    severity: critical
+    requirement: "R5, R6, R7"
+    metric: "% anios con formato AAAA >= 100%"
+    threshold_basis: "Es PK de dim_tiempo y parte de la llave de integracion temporal. Un anio invalido rompe R5 y el cruce municipio-anio."
+
+  - rule_id: DQ-P04
+    gate: primary_raw
+    data_object: primary_raw
+    attribute: NUMERO_DE_EMPLEADOS
+    dimension: Validity
+    expectation: ExpectColumnValuesToMatchRegex
+    kwargs: {column: NUMERO_DE_EMPLEADOS, regex: '^\d+$', mostly: 0.995}
+    severity: warning
+    requirement: "R1, R3, R4"
+    metric: "% enteros no negativos >= 99.5%"
+    threshold_basis: "Perfilamiento de la Primera Entrega: 0 negativos. Se tolera 0.5% por errores de digitacion del RNT; los invalidos se rechazan (no se convierten a 0) y se cuentan en la transformacion."
+
+  - rule_id: DQ-P05
+    gate: primary_raw
+    data_object: primary_raw
+    attribute: "(tabla)"
+    dimension: Completeness (volumen)
+    expectation: ExpectTableRowCountToBeBetween
+    kwargs: {min_value: 340000, max_value: 5000000}
+    severity: warning
+    requirement: "R1-R5"
+    metric: "filas >= 50% del baseline historico (679,548)"
+    threshold_basis: "Base historica: 679,548 filas en la Primera Entrega. Una caida > 50% sugiere descarga truncada; se avisa y se deja evidencia."
+
+  # ---------------------------- Gate 2: api_raw ----------------------------
+  - rule_id: DQ-A01
+    gate: api_raw
+    data_object: api_raw
+    attribute: "codigo_municipio, anio"
+    dimension: Validity (schema)
+    expectation: ExpectTableColumnsToMatchSet
+    kwargs: {column_set: [codigo_municipio, anio], exact_match: false}
+    severity: critical
+    requirement: "R6, R7"
+    metric: "columnas clave faltantes = 0"
+    threshold_basis: "Contrato de integracion (13.1): sin las llaves canonicas no hay cruce posible con el RNT."
+
+  - rule_id: DQ-A02
+    gate: api_raw
+    data_object: api_raw
+    attribute: codigo_municipio
+    dimension: Completeness
+    expectation: ExpectColumnValuesToNotBeNull
+    kwargs: {column: codigo_municipio, mostly: 0.98}
+    severity: critical
+    requirement: "R6, R7"
+    metric: "% no nulos >= 98%"
+    threshold_basis: "Es la llave de integracion. Con >2% de llaves nulas se pierde cobertura municipal de forma material en los KPIs integrados. Umbral a recalibrar con el profiling de la API."
+
+  - rule_id: DQ-A03
+    gate: api_raw
+    data_object: api_raw
+    attribute: anio
+    dimension: Validity
+    expectation: ExpectColumnValuesToMatchRegex
+    kwargs: {column: anio, regex: '^\d{4}$', mostly: 0.99}
+    severity: critical
+    requirement: "R6, R7"
+    metric: "% anios AAAA >= 99%"
+    threshold_basis: "Alineacion temporal con dim_tiempo; un anio ilegible impide emparejar con el hecho anual del RNT."
+
+  - rule_id: DQ-A04
+    gate: api_raw
+    data_object: api_raw
+    attribute: "$API_VALUE_FIELD_0"
+    dimension: Validity
+    expectation: ExpectColumnValuesToMatchRegex
+    kwargs: {column: "$API_VALUE_FIELD_0", regex: '^-?\d+(\.\d+)?$', mostly: 0.95}
+    severity: warning
+    requirement: "R6, R7"
+    metric: "% valores numericos >= 95%"
+    threshold_basis: "Los indicadores no numericos se descartan en transformacion y se registran; hasta 5% es tolerable para KPIs agregados por municipio."
+
+  - rule_id: DQ-A05
+    gate: api_raw
+    data_object: api_raw
+    attribute: "codigo_municipio, anio"
+    dimension: Uniqueness
+    expectation: ExpectCompoundColumnsToBeUnique
+    kwargs: {column_list: [codigo_municipio, anio]}
+    severity: warning
+    requirement: "R6, R7"
+    metric: "duplicados (municipio, anio) = 0"
+    threshold_basis: "Contrato de cardinalidad 1:1 esperada por (municipio, anio). Si la API trae mas dimensiones (p.ej. area/sexo) debe agregarse antes de integrar; se avisa como emparejamiento ambiguo."
+
+  # ---------------------------- Gate 3: prepared ----------------------------
+  - rule_id: DQ-D01
+    gate: prepared
+    data_object: fact_turismo_anual
+    attribute: "id_fact, codigo_rnt, codigo_municipio, id_categoria, anio, medidas"
+    dimension: Validity (schema)
+    expectation: ExpectTableColumnsToMatchSet
+    kwargs: {column_set: [id_fact, codigo_rnt, codigo_municipio, id_categoria, anio,
+                          numero_de_habitaciones, numero_de_camas, numero_de_empleados], exact_match: true}
+    severity: critical
+    requirement: "R1-R5"
+    metric: "esquema exacto del hecho"
+    threshold_basis: "Contrato fisico del DW (sql/02_create_dw.sql). Una columna extra o faltante rompe la carga."
+
+  - rule_id: DQ-D02
+    gate: prepared
+    data_object: fact_turismo_anual
+    attribute: codigo_municipio
+    dimension: Referential integrity
+    expectation: ExpectColumnValuesToBeInSet
+    kwargs: {column: codigo_municipio, value_set: {$ref: "dim_ubicacion.codigo_municipio"}}
+    severity: critical
+    requirement: "R1, R2, R6, R7"
+    metric: "FK huerfanas = 0"
+    threshold_basis: "La carga dimensional exige integridad referencial (Seccion 15); una FK huerfana hace fallar o corrompe el load."
+
+  - rule_id: DQ-D03
+    gate: prepared
+    data_object: fact_turismo_anual
+    attribute: "numero_de_empleados"
+    dimension: Validity (rango)
+    expectation: ExpectColumnValuesToBeBetween
+    kwargs: {column: numero_de_empleados, min_value: 0, max_value: 100000}
+    severity: critical
+    requirement: "R1, R3, R4"
+    metric: "0 <= empleados <= 100,000"
+    threshold_basis: "Invariante de dominio (conteo no negativo). Maximo 100,000 = cota fisica de empleo por un solo PST; el maximo observado en la Primera Entrega fue 850."
+
+  - rule_id: DQ-D04
+    gate: prepared
+    data_object: fact_turismo_anual
+    attribute: "codigo_rnt, codigo_municipio, id_categoria, anio"
+    dimension: Uniqueness (grano)
+    expectation: ExpectCompoundColumnsToBeUnique
+    kwargs: {column_list: [codigo_rnt, codigo_municipio, id_categoria, anio]}
+    severity: warning
+    requirement: "R1-R5"
+    metric: "duplicados en el grano = 0"
+    threshold_basis: "Grano declarado (Primera Entrega 10.1): snapshot anual por PST-municipio. Marcado warning hasta confirmar con profiling si el RNT repite PST por anio."
+
+  - rule_id: DQ-D05
+    gate: prepared
+    data_object: integration_match
+    attribute: matched
+    dimension: Integration integrity
+    expectation: ExpectColumnMeanToBeBetween
+    kwargs: {column: matched, min_value: 0.50, max_value: 1.0}
+    severity: critical
+    requirement: "R6, R7"
+    metric: "cobertura de emparejamiento >= 50% de pares (municipio, anio) del RNT"
+    threshold_basis: "Por debajo de 50% los KPIs per capita de R6/R7 no representan la distribucion nacional. Umbral analitico, a ratificar con el equipo de integracion."
+
+  - rule_id: DQ-D06
+    gate: prepared
+    data_object: integration_match
+    attribute: matched
+    dimension: Integration integrity
+    expectation: ExpectColumnMeanToBeBetween
+    kwargs: {column: matched, min_value: 0.85, max_value: 1.0}
+    severity: warning
+    requirement: "R6, R7"
+    metric: "cobertura >= 85%"
+    threshold_basis: "Nivel objetivo de calidad de integracion; entre 50% y 85% se continua con aviso y se reporta como limitacion."

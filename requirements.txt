@@ -1,0 +1,9 @@
+# Versiones PROBADAS junto a apache-airflow==3.1.8 (pip check limpio, Python 3.12).
+# Airflow ya viene en la imagen base apache/airflow:3.1.8; aqui solo se agrega lo del proyecto.
+great_expectations==1.24.1
+pandas==3.1.0
+pyarrow==26.0.0
+SQLAlchemy==2.0.48
+psycopg2-binary==2.9.13
+requests==2.32.5
+PyYAML==6.0.3
